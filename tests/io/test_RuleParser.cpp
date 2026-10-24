@@ -65,7 +65,6 @@ TEST(RuleParserTest, ThrowsOnMissingOperator) {
 }
 
 TEST(RuleParserTest, ThrowsOnMissingLHS) {
-    // Starts immediately with '=' or ':'
     createTempFile("test_missing_lhs.txt", "= 0-9\n");
     RuleParser parser("test_missing_lhs.txt");
 
@@ -73,7 +72,6 @@ TEST(RuleParserTest, ThrowsOnMissingLHS) {
 }
 
 TEST(RuleParserTest, ThrowsOnMissingRHS) {
-    // Has LHS and operator, but nothing after it
     createTempFile("test_missing_rhs.txt", "empty_def =\n");
     RuleParser parser("test_missing_rhs.txt");
 
@@ -81,7 +79,6 @@ TEST(RuleParserTest, ThrowsOnMissingRHS) {
 }
 
 TEST(RuleParserTest, ThrowsOnMalformedPunctuation) {
-    // Missing closing bracket for punctuation
     createTempFile("test_bad_punc.txt", "[ ; , \\( \n");
     RuleParser parser("test_bad_punc.txt");
 
@@ -89,7 +86,6 @@ TEST(RuleParserTest, ThrowsOnMalformedPunctuation) {
 }
 
 TEST(RuleParserTest, ThrowsOnMissingClosingBracket) {
-    // Missing the closing '}' for keywords
     createTempFile("test_missing_bracket.txt", "{ boolean int float \n");
     RuleParser parser("test_missing_bracket.txt");
 
