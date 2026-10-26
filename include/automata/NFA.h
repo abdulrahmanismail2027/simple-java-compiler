@@ -1,4 +1,6 @@
 #pragma once
+#include <vector>
+
 #include "automata/FA.h"
 #include "automata/NFATransitionTable.h"
 
@@ -11,4 +13,6 @@ public:
     void addTransition(int from_state, char input, int to_state) override;
 
     [[nodiscard]] const NFATransitionTable &getTable() const;
+
+    static NFA combine(const std::vector<NFA>& nfas);
 };
