@@ -36,6 +36,7 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(unit_tests
+        tests/automata/test_DFAConstruction.cpp
         tests/io/test_RuleParser.cpp
 )
 
