@@ -19,6 +19,7 @@ add_library(automata
         src/automata/NFATransitionTable.cpp
         src/automata/NFA.cpp
         src/automata/DFA.cpp
+        src/automata/DFAMinimizer.cpp
         src/automata/FA.cpp
 )
 
@@ -37,6 +38,7 @@ enable_testing()
 
 add_executable(unit_tests
         tests/automata/test_DFAConstruction.cpp
+        tests/automata/test_DFAMinimization.cpp
         tests/io/test_RuleParser.cpp
 )
 
