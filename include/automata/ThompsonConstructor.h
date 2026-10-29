@@ -34,7 +34,6 @@ private:
     static void requireUnaryChild(const RegexNode* node);
 
 public:
-public:
     [[nodiscard]] static NFA construct(
         const RegexNode* root,
         const std::string& tokenClass = "",

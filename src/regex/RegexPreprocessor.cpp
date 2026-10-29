@@ -1,5 +1,6 @@
 #include "regex/RegexPreprocessor.h"
 
+#include <cctype>
 #include <stdexcept>
 #include <algorithm>
 
@@ -100,7 +101,18 @@ std::string RegexPreprocessor::expandRegex(
             }
 
             if (ranged.compare(i, name.size(), name) == 0) {
-                best = it;
+                // Word-boundary check: ensure the match is not part
+                // of a longer identifier (e.g. "digit" inside "digital").
+                const bool leftOk  = (i == 0) ||
+                    (!std::isalnum(static_cast<unsigned char>(ranged[i - 1])) &&
+                     ranged[i - 1] != '_');
+                const bool rightOk = (i + name.size() >= ranged.size()) ||
+                    (!std::isalnum(static_cast<unsigned char>(ranged[i + name.size()])) &&
+                     ranged[i + name.size()] != '_');
+
+                if (leftOk && rightOk) {
+                    best = it;
+                }
             }
         }
 

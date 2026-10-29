@@ -3,46 +3,55 @@
 #include <fstream>
 #include <string>
 #include <stdexcept>
+#include <filesystem>
 
-static void createTempFile(const std::string& filename, const std::string& content) {
-        std::ofstream out(filename);
-        out << content;
-    }
+static std::string createTempFile(const std::string& filename, const std::string& content) {
+    auto path = std::filesystem::temp_directory_path() / filename;
+    std::ofstream out(path);
+    out << content;
+    return path.string();
+}
 
 TEST(RuleParserTest, ParseKeywords) {
-    createTempFile("test_keywords.txt", "{ boolean int float }\n");
-    RuleParser parser("test_keywords.txt");
+    std::string file = createTempFile("test_keywords.txt", "{ boolean int float }\n");
+    RuleParser parser(file);
     const ParsedRules rules = parser.parse();
 
     ASSERT_EQ(rules.keywords.size(), 3);
     EXPECT_EQ(rules.keywords[0], "boolean");
     EXPECT_EQ(rules.keywords[1], "int");
     EXPECT_EQ(rules.keywords[2], "float");
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ParsePunctuations) {
-    createTempFile("test_punc.txt", "[ ; , \\( \\) { } ]\n");
-    RuleParser parser("test_punc.txt");
+    std::string file = createTempFile("test_punc.txt", "[ ; , \\( \\) { } ]\n");
+    RuleParser parser(file);
     const ParsedRules rules = parser.parse();
 
     ASSERT_GE(rules.punctuations.size(), 6);
     EXPECT_EQ(rules.punctuations[0], ";");
     EXPECT_EQ(rules.punctuations[2], "\\(");
     EXPECT_EQ(rules.punctuations[3], "\\)");
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ParseRegularDefinitions) {
-    createTempFile("test_defs.txt", "digit = 0-9\nletter = a-z\n");
-    RuleParser parser("test_defs.txt");
+    std::string file = createTempFile("test_defs.txt", "digit = 0-9\nletter = a-z\n");
+    RuleParser parser(file);
     const ParsedRules rules = parser.parse();
 
     EXPECT_EQ(rules.regular_definitions.at("digit"), "0-9");
     EXPECT_EQ(rules.regular_definitions.at("letter"), "a-z");
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ParseRegularExpressions) {
-    createTempFile("test_expr.txt", "assign: =\nrelop: <=\n");
-    RuleParser parser("test_expr.txt");
+    std::string file = createTempFile("test_expr.txt", "assign: =\nrelop: <=\n");
+    RuleParser parser(file);
     const ParsedRules rules = parser.parse();
 
     ASSERT_EQ(rules.regular_expressions.size(), 2);
@@ -50,6 +59,8 @@ TEST(RuleParserTest, ParseRegularExpressions) {
     EXPECT_EQ(rules.regular_expressions[0].second, "=");
     EXPECT_EQ(rules.regular_expressions[1].first, "relop");
     EXPECT_EQ(rules.regular_expressions[1].second, "<=");
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ThrowsOnMissingFile) {
@@ -58,36 +69,46 @@ TEST(RuleParserTest, ThrowsOnMissingFile) {
 }
 
 TEST(RuleParserTest, ThrowsOnMissingOperator) {
-    createTempFile("test_missing_op.txt", "digit 0-9\n");
-    RuleParser parser("test_missing_op.txt");
+    std::string file = createTempFile("test_missing_op.txt", "digit 0-9\n");
+    RuleParser parser(file);
 
     EXPECT_THROW((void)parser.parse(), std::runtime_error);
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ThrowsOnMissingLHS) {
-    createTempFile("test_missing_lhs.txt", "= 0-9\n");
-    RuleParser parser("test_missing_lhs.txt");
+    std::string file = createTempFile("test_missing_lhs.txt", "= 0-9\n");
+    RuleParser parser(file);
 
     EXPECT_THROW((void)parser.parse(), std::runtime_error);
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ThrowsOnMissingRHS) {
-    createTempFile("test_missing_rhs.txt", "empty_def =\n");
-    RuleParser parser("test_missing_rhs.txt");
+    std::string file = createTempFile("test_missing_rhs.txt", "empty_def =\n");
+    RuleParser parser(file);
 
     EXPECT_THROW((void)parser.parse(), std::runtime_error);
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ThrowsOnMalformedPunctuation) {
-    createTempFile("test_bad_punc.txt", "[ ; , \\( \n");
-    RuleParser parser("test_bad_punc.txt");
+    std::string file = createTempFile("test_bad_punc.txt", "[ ; , \\( \n");
+    RuleParser parser(file);
 
     EXPECT_THROW((void)parser.parse(), std::runtime_error);
+
+    std::filesystem::remove(file);
 }
 
 TEST(RuleParserTest, ThrowsOnMissingClosingBracket) {
-    createTempFile("test_missing_bracket.txt", "{ boolean int float \n");
-    RuleParser parser("test_missing_bracket.txt");
+    std::string file = createTempFile("test_missing_bracket.txt", "{ boolean int float \n");
+    RuleParser parser(file);
 
     EXPECT_THROW((void)parser.parse(), std::runtime_error);
+
+    std::filesystem::remove(file);
 }

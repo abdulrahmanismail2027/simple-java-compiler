@@ -47,7 +47,7 @@ NFA LexerNFAFactory::build(const ParsedRules& rules) {
 
         tokenNFAs.push_back(
             ThompsonConstructor::construct(
-                *ast, "KEYWORD", priority++
+                *ast, keyword, priority++
             )
         );
     }
@@ -60,7 +60,7 @@ NFA LexerNFAFactory::build(const ParsedRules& rules) {
 
         tokenNFAs.push_back(
             ThompsonConstructor::construct(
-                *ast, "PUNCTUATION", priority++
+                *ast, literal, priority++
             )
         );
     }
