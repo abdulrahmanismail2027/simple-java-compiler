@@ -24,6 +24,7 @@ add_library(automata
         src/automata/NFATransitionTable.cpp
         src/automata/NFA.cpp
         src/automata/DFA.cpp
+        src/automata/DFAMinimizer.cpp
         src/automata/FA.cpp
         src/automata/ThompsonConstructor.cpp
         src/automata/LexerNFAFactory.cpp
@@ -43,6 +44,8 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 add_executable(unit_tests
+        tests/automata/test_DFAConstruction.cpp
+        tests/automata/test_DFAMinimization.cpp
         tests/io/test_RuleParser.cpp
         tests/regex/test_RegexParser.cpp
         tests/automata/test_ThompsonConstruction.cpp
