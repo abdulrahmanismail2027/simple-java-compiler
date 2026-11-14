@@ -80,6 +80,9 @@ void RuleParser::parseRule(ParsedRules& rules) {
     while (true) {
         std::string chunk = consumeWord();
         if (chunk.empty()) break;
+        if (op == ':' && !rhs.empty()) {
+            rhs += ' ';
+        }
         rhs += chunk;
     }
 

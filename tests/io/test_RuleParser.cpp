@@ -5,6 +5,10 @@
 #include <stdexcept>
 #include <filesystem>
 
+#include "automata/DFA.h"
+#include "automata/LexerNFAFactory.h"
+#include "regex/RegexPreprocessor.h"
+
 static std::string createTempFile(const std::string& filename, const std::string& content) {
     auto path = std::filesystem::temp_directory_path() / filename;
     std::ofstream out(path);
@@ -61,6 +65,33 @@ TEST(RuleParserTest, ParseRegularExpressions) {
     EXPECT_EQ(rules.regular_expressions[1].second, "<=");
 
     std::filesystem::remove(file);
+}
+
+TEST(RuleParserTest, ExpandsDefinitionAfterLiteralInNumberExponent) {
+    const std::string file = createTempFile(
+        "test_num_exponent_boundary.txt",
+        "digit = 0-9\n"
+        "digits = digit+\n"
+        "num: digit+ | digit+ . digits ( \\L | E digits)\n");
+    const ParsedRules rules = RuleParser(file).parse();
+    std::filesystem::remove(file);
+
+    ASSERT_EQ(rules.regular_expressions.size(), 1);
+    const std::string expanded = RegexPreprocessor(rules).expand(
+        rules.regular_expressions.front().second);
+    EXPECT_EQ(expanded.find("Edigits"), std::string::npos);
+    EXPECT_NE(expanded.find("E("), std::string::npos);
+
+    const DFA dfa = DFA::fromNFA(LexerNFAFactory::build(rules));
+    int state = dfa.getStartState();
+    for (const char symbol : std::string("12.34E5")) {
+        state = dfa.getTable().getNextState(state, symbol);
+        ASSERT_NE(state, -1);
+    }
+
+    const auto accept = dfa.getAcceptStates().find(state);
+    ASSERT_NE(accept, dfa.getAcceptStates().end());
+    EXPECT_EQ(accept->second.token_class, "num");
 }
 
 TEST(RuleParserTest, ThrowsOnMissingFile) {

@@ -1,0 +1,491 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=25mm]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{pdflscape}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    pdftitle={Lexical Analyzer Generator -- Phase 1},
+    pdfauthor={Compiler Design Group}
+}
+
+\lstdefinestyle{code}{
+    basicstyle=\ttfamily\small,
+    columns=fullflexible,
+    breaklines=true,
+    keepspaces=true,
+    showstringspaces=false,
+    frame=single,
+    rulecolor=\color{black!35},
+    xleftmargin=4pt,
+    xrightmargin=4pt,
+    aboveskip=6pt,
+    belowskip=6pt
+}
+\lstset{style=code}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\symbolchar}[1]{\texttt{#1}}
+\newcommand{\opensymbolset}{\texttt{[}}
+\newcommand{\closesymbolset}{\texttt{]}}
+
+\begin{document}
+
+\hypersetup{pageanchor=false}
+\begin{titlepage}
+    \centering
+    \vspace*{18mm}
+    {\Large Alexandria University\par}
+    \vspace{3mm}
+    {\large Faculty of Engineering\par}
+    {\large Computer and Systems Engineering Department\par}
+    \vspace{24mm}
+    {\LARGE\bfseries Lexical Analyzer Generator --- Phase 1\par}
+    \vspace{8mm}
+    {\Large Compiler Design\par}
+    \vspace{24mm}
+    \begin{minipage}{0.82\textwidth}
+        \centering
+        \large
+        \textbf{Group members}\\[8mm]
+        Abdelrahman Ismail \quad ID: 22010866\\[7mm]
+        Nour El deen Akram \quad ID: 22011309\\[7mm]
+        Omar Khaled \quad ID: 22010962\\[7mm]
+        Yaseen Asaad \quad ID: 22011349
+    \end{minipage}
+    \vfill
+\end{titlepage}
+
+\hypersetup{pageanchor=true}
+\pagenumbering{roman}
+\tableofcontents
+\clearpage
+\pagenumbering{arabic}
+
+\section{Introduction and objective}
+
+Phase 1 implements a lexical-analyzer generator for the supplied regular
+specification of a small Java subset. The generator constructs token
+automata, combines and determinizes them, minimizes the DFA, prints the
+minimized transition table, and emits an independent C++ lexical analyzer
+that simulates that DFA. The generated analyzer recognizes tokens,
+records identifier lexemes in a symbol table, and reports lexical errors
+while continuing to scan.
+
+The scope of this report is Phase 1 only. Parser integration and the
+optional Lex/Flex bonus task are not included.
+
+\section{System overview}
+
+The implemented data flow is:
+
+\begin{center}
+\code{Lexical rules}
+$\rightarrow$ \code{RuleParser}
+$\rightarrow$ \code{RegexPreprocessor}
+$\rightarrow$ \code{RegexParser}
+$\rightarrow$ \code{ThompsonConstructor}
+$\rightarrow$ \code{NFA::combine}
+$\rightarrow$ \code{DFA::fromNFA}
+$\rightarrow$ \code{DFA::minimize}
+$\rightarrow$ \code{transition table}
+$\rightarrow$ \code{generated lexer}
+\end{center}
+
+The driver in \code{src/lexer/main.cpp} parses the rules, builds the
+combined NFA, constructs and minimizes the DFA, prints the minimized
+table, and writes \code{generated\_lexer.cpp}. The generated program
+contains the minimized DFA data and performs scanning without linking to
+the generator or rebuilding automata at runtime.
+
+\section{Data structures}
+
+\begin{description}
+    \item[Parsed rules.] \code{ParsedRules} stores regular definitions in
+    an unordered map, regular expressions in an ordered vector, and
+    keywords and punctuation in vectors. Keeping regular expressions in
+    input order supports the specified first-listed-rule priority.
+    \item[Regular-expression syntax tree.] \code{RegexNode} is a
+    \code{unique\_ptr}-owned tree. Its node types represent symbols,
+    epsilon, concatenation, alternation, Kleene star, and positive
+    closure.
+    \item[Finite automata.] The common \code{FA} base stores a start-state
+    ID and an accepting-state map. Each \code{AcceptState} records its
+    state ID, priority, and token class.
+    \item[NFA transitions.] \code{NFATransitionTable} maps a state and
+    input symbol to a set of destination states. The null character
+    \code{'\textbackslash 0'} denotes epsilon and is excluded from the
+    input alphabet.
+    \item[DFA transitions.] \code{DFATransitionTable} maps a state and
+    input symbol to one destination state. A missing transition is
+    returned as \code{-1}.
+    \item[Token and symbol table.] \code{Token} contains a token class
+    and an attribute string. \code{SymbolTable} stores identifier
+    lexemes in an unordered set, avoiding duplicate entries.
+    \item[Generated tables.] The standalone program embeds state IDs,
+    a nested map of DFA transitions, the start state, and an accepting
+    map containing token class and priority.
+\end{description}
+
+\section{Algorithms and techniques}
+
+\subsection{Rule parsing and regular-expression preprocessing}
+
+\code{RuleParser} recognizes \code{LHS = RHS} definitions,
+\code{LHS: RHS} expressions, keyword lists in braces, and punctuation
+lists in brackets. For expression rules it preserves separators long
+enough for the preprocessor to distinguish a definition name following a
+literal. The preprocessor expands character ranges and recursively
+expands named definitions while preserving escaped symbols and guarding
+against circular definitions.
+
+\code{RegexParser} builds the syntax tree using alternation, implicit
+concatenation, postfix repetition, and atoms. The supplied specification
+uses \code{|}, \code{+}, \code{*}, parentheses, ranges, and backslash
+escapes; \code{\textbackslash L} is parsed as epsilon.
+
+\subsection{Thompson construction and NFA combination}
+
+Thompson construction creates a two-state fragment for a symbol or
+epsilon. Concatenation joins fragments by an epsilon transition;
+alternation introduces a split and join; star adds skip, repeat, and exit
+epsilon transitions; positive closure requires an initial traversal and
+then permits repetition or exit. Each token NFA has an accepting state
+carrying its token class and priority.
+
+The factory builds literal NFAs for reserved keywords and punctuation
+and expression NFAs for named token rules. \code{NFA::combine} assigns
+disjoint state IDs and connects a new common start state to each
+individual start using epsilon transitions.
+
+\subsection{Subset construction}
+
+\code{DFA::fromNFA} represents each DFA state as a set of NFA states.
+It computes the transitive epsilon closure of the initial state set and
+after each move. For each input symbol it unions destinations, closes
+the result, and reuses an existing DFA state when the same subset has
+already been seen. If a subset contains multiple accepting NFA states,
+the smallest priority wins; missing transitions remain absent.
+
+\subsection{DFA minimization}
+
+\code{DFA::minimize} considers states reachable from the start state.
+Its initial partition signature distinguishes non-accepting states from
+accepting states and also distinguishes accepting states by both token
+class and priority. It repeatedly refines partitions according to their
+destination partitions for every reachable alphabet symbol. The
+minimized DFA is then traversed from its start partition to assign
+compact state IDs. Missing transitions are modeled through a rejecting
+sink during refinement and omitted from the emitted partial DFA.
+
+\subsection{Scanning, priority, and recovery}
+
+The generated scanner skips whitespace, starts at the DFA start state,
+and advances one input character at a time. It records the most recent
+accepting state and position while following transitions; when a
+transition is missing or input ends, it emits the longest accepted
+prefix and resumes at that position. The DFA's acceptance metadata
+preserves rule priority, and the scanner also compares priority when
+accepting candidates have the same length.
+
+The factory processes keywords as reserved literal tokens, before
+punctuation and regular expressions. Within the regular-expression
+list, order is retained, so the first listed expression wins equal-length
+ties. Each emitted token uses its lexeme as its attribute. Lexemes whose
+class is \code{id} are inserted into the symbol table. If no token is
+accepted at the current position, the scanner reports the offending
+character and advances by one character, allowing later input to be
+scanned.
+
+\section{Supplied lexical rules}
+
+The following listing reproduces \code{examples/lexical\_rules.txt}
+without rewriting its expressions:
+
+\begin{lstlisting}
+letter = a-z | A-Z
+digit = 0 - 9
+id: letter (letter|digit)*
+digits = digit+
+{boolean int float}
+num: digit+ ( \L | E digits | . digits ( \L | E digits))
+relop: \=\= | !\= | > | >\= | < | <\=
+assign: =
+{ if else while }
+[; , \( \) { }]
+addop: \+ | \-
+mulop: \* | /
+\end{lstlisting}
+
+The identifier rule requires a letter followed by zero or more letters
+or digits. The number rule follows the assignment's prose definition and
+accepts integer and decimal forms, each with an optional exponent. The
+keyword sets together contain \code{int}, \code{float}, \code{boolean},
+\code{if}, \code{else}, and \code{while}. The relational operators are
+specified by \code{relop}, assignment by \code{assign}, addition and
+subtraction by \code{addop}, and multiplication and division by
+\code{mulop}. The punctuation list contains semicolon, comma,
+parentheses, and curly brackets.
+
+\section{Minimized DFA transition table}
+
+Running the generator on the supplied rules produced 196 DFA states
+before minimization and 44 states afterward. The minimized start state
+is 0; the state IDs are 0 through 43. The generated table has 77 input
+symbols, 1,744 transitions, and 40 accepting states. Each accepting
+entry below includes its token class and priority. A transition entry
+groups symbols only when they have the same destination; every symbol
+is explicitly enumerated, so this is a lossless presentation of the
+generator's table. A dash means that the state has no outgoing
+transition.
+
+\begin{landscape}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{longtable}{
+    >{\centering\arraybackslash}p{0.8cm}
+    >{\centering\arraybackslash}p{0.7cm}
+    >{\raggedright\arraybackslash}p{3.7cm}
+    >{\raggedright\arraybackslash}p{18.1cm}
+}
+\caption{Minimized DFA table; listed symbol sets share a destination.}\\
+\toprule
+State & Start & Accepting class (priority) & Input symbols $\to$ destination\\
+\midrule
+\endfirsthead
+\multicolumn{4}{c}{\tablename\ \thetable{} --- continued}\\
+\toprule
+State & Start & Accepting class (priority) & Input symbols $\to$ destination\\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{Continued on next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+\texttt{0} & Yes & --- & \opensymbolset \texttt{!} \closesymbolset $\to$ 1; \opensymbolset \texttt{(} \closesymbolset $\to$ 2; \opensymbolset \texttt{)} \closesymbolset $\to$ 3; \opensymbolset \texttt{*}, \texttt{/} \closesymbolset $\to$ 4; \opensymbolset \texttt{+}, \texttt{-} \closesymbolset $\to$ 5; \opensymbolset \texttt{,} \closesymbolset $\to$ 6; \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9} \closesymbolset $\to$ 7; \opensymbolset \texttt{;} \closesymbolset $\to$ 8; \opensymbolset \texttt{<}, \texttt{>} \closesymbolset $\to$ 9; \opensymbolset \texttt{=} \closesymbolset $\to$ 10; \opensymbolset \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{c}, \texttt{d}, \texttt{g}, \texttt{h}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{b} \closesymbolset $\to$ 12; \opensymbolset \texttt{e} \closesymbolset $\to$ 13; \opensymbolset \texttt{f} \closesymbolset $\to$ 14; \opensymbolset \texttt{i} \closesymbolset $\to$ 15; \opensymbolset \texttt{w} \closesymbolset $\to$ 16; \opensymbolset \texttt{\char123{}} \closesymbolset $\to$ 17; \opensymbolset \texttt{\char125{}} \closesymbolset $\to$ 18 \\
+\texttt{1} & -- & --- & \opensymbolset \texttt{=} \closesymbolset $\to$ 19 \\
+\texttt{2} & -- & \texttt{(} (priority 8) & -- \\
+\texttt{3} & -- & \texttt{)} (priority 9) & -- \\
+\texttt{4} & -- & \texttt{mulop} (priority 17) & -- \\
+\texttt{5} & -- & \texttt{addop} (priority 16) & -- \\
+\texttt{6} & -- & \texttt{,} (priority 7) & -- \\
+\texttt{7} & -- & \texttt{num} (priority 13) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9} \closesymbolset $\to$ 7; \opensymbolset \texttt{.} \closesymbolset $\to$ 20; \opensymbolset \texttt{E} \closesymbolset $\to$ 21 \\
+\texttt{8} & -- & \texttt{;} (priority 6) & -- \\
+\texttt{9} & -- & \texttt{relop} (priority 14) & \opensymbolset \texttt{=} \closesymbolset $\to$ 19 \\
+\texttt{10} & -- & \texttt{assign} (priority 15) & \opensymbolset \texttt{=} \closesymbolset $\to$ 19 \\
+\texttt{11} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\texttt{12} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{o} \closesymbolset $\to$ 22 \\
+\texttt{13} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{l} \closesymbolset $\to$ 23 \\
+\texttt{14} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{l} \closesymbolset $\to$ 24 \\
+\texttt{15} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{f} \closesymbolset $\to$ 25; \opensymbolset \texttt{n} \closesymbolset $\to$ 26 \\
+\texttt{16} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{h} \closesymbolset $\to$ 27 \\
+\texttt{17} & -- & \texttt{\char123{}} (priority 10) & -- \\
+\texttt{18} & -- & \texttt{\char125{}} (priority 11) & -- \\
+\texttt{19} & -- & \texttt{relop} (priority 14) & -- \\
+\texttt{20} & -- & --- & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9} \closesymbolset $\to$ 28 \\
+\texttt{21} & -- & --- & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9} \closesymbolset $\to$ 29 \\
+\texttt{22} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{o} \closesymbolset $\to$ 30 \\
+\texttt{23} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{s} \closesymbolset $\to$ 31 \\
+\texttt{24} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{o} \closesymbolset $\to$ 32 \\
+\texttt{25} & -- & \texttt{if} (priority 3) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\texttt{26} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{t} \closesymbolset $\to$ 33 \\
+\texttt{27} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{i} \closesymbolset $\to$ 34 \\
+\texttt{28} & -- & \texttt{num} (priority 13) & \opensymbolset \texttt{E} \closesymbolset $\to$ 21; \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9} \closesymbolset $\to$ 28 \\
+\texttt{29} & -- & \texttt{num} (priority 13) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9} \closesymbolset $\to$ 29 \\
+\texttt{30} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{l} \closesymbolset $\to$ 35 \\
+\texttt{31} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{e} \closesymbolset $\to$ 36 \\
+\texttt{32} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{a} \closesymbolset $\to$ 37 \\
+\texttt{33} & -- & \texttt{int} (priority 1) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\texttt{34} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{l} \closesymbolset $\to$ 38 \\
+\texttt{35} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{e} \closesymbolset $\to$ 39 \\
+\texttt{36} & -- & \texttt{else} (priority 4) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\texttt{37} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{t} \closesymbolset $\to$ 40 \\
+\texttt{38} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{e} \closesymbolset $\to$ 41 \\
+\texttt{39} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{a} \closesymbolset $\to$ 42 \\
+\texttt{40} & -- & \texttt{float} (priority 2) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\texttt{41} & -- & \texttt{while} (priority 5) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\texttt{42} & -- & \texttt{id} (priority 12) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11; \opensymbolset \texttt{n} \closesymbolset $\to$ 43 \\
+\texttt{43} & -- & \texttt{boolean} (priority 0) & \opensymbolset \texttt{0}, \texttt{1}, \texttt{2}, \texttt{3}, \texttt{4}, \texttt{5}, \texttt{6}, \texttt{7}, \texttt{8}, \texttt{9}, \texttt{A}, \texttt{B}, \texttt{C}, \texttt{D}, \texttt{E}, \texttt{F}, \texttt{G}, \texttt{H}, \texttt{I}, \texttt{J}, \texttt{K}, \texttt{L}, \texttt{M}, \texttt{N}, \texttt{O}, \texttt{P}, \texttt{Q}, \texttt{R}, \texttt{S}, \texttt{T}, \texttt{U}, \texttt{V}, \texttt{W}, \texttt{X}, \texttt{Y}, \texttt{Z}, \texttt{a}, \texttt{b}, \texttt{c}, \texttt{d}, \texttt{e}, \texttt{f}, \texttt{g}, \texttt{h}, \texttt{i}, \texttt{j}, \texttt{k}, \texttt{l}, \texttt{m}, \texttt{n}, \texttt{o}, \texttt{p}, \texttt{q}, \texttt{r}, \texttt{s}, \texttt{t}, \texttt{u}, \texttt{v}, \texttt{w}, \texttt{x}, \texttt{y}, \texttt{z} \closesymbolset $\to$ 11 \\
+\end{longtable}
+\end{landscape}
+
+\section{Generated lexical analyzer}
+
+The standalone C++ source embeds the start state, all minimized states,
+the transition map, and accepting-state class/priority information. It
+uses those tables directly and does not use regular expressions or
+reconstruct the NFA or DFA. The generated source depends only on the C++
+standard library.
+
+The generated program accepts source from a file argument or standard
+input. The lexer class provides a \code{nextToken} method that reads
+characters from the stream as needed and returns one token at a time. A lookahead buffer
+retains characters needed to finish maximal-munch matching without
+loading the entire source file. The standalone \code{main} repeatedly
+calls this method and prints each token class with its lexeme as the
+attribute. Identifier lexemes are inserted into the symbol table. On an
+unrecognized character the lexer writes an error to standard error,
+advances one character, and continues. It uses \code{std::isspace} to
+skip whitespace.
+
+\section{Testing and results}
+
+\subsection{Supplied program}
+
+The supplied source was:
+
+\begin{lstlisting}
+int sum , count , pass , mnt; while (pass !=10)
+{
+pass = pass + 1 ;
+}
+\end{lstlisting}
+
+The generated lexer produced 23 tokens and no lexical errors. Its actual
+token output, including attributes, was:
+
+\begin{lstlisting}
+Token class: int, attribute: int
+Token class: id, attribute: sum
+Token class: ,, attribute: ,
+Token class: id, attribute: count
+Token class: ,, attribute: ,
+Token class: id, attribute: pass
+Token class: ,, attribute: ,
+Token class: id, attribute: mnt
+Token class: ;, attribute: ;
+Token class: while, attribute: while
+Token class: (, attribute: (
+Token class: id, attribute: pass
+Token class: relop, attribute: !=
+Token class: num, attribute: 10
+Token class: ), attribute: )
+Token class: {, attribute: {
+Token class: id, attribute: pass
+Token class: assign, attribute: =
+Token class: id, attribute: pass
+Token class: addop, attribute: +
+Token class: num, attribute: 1
+Token class: ;, attribute: ;
+Token class: }, attribute: }
+\end{lstlisting}
+
+The corresponding token-class stream is:
+
+\begin{lstlisting}
+int
+id
+,
+id
+,
+id
+,
+id
+;
+while
+(
+id
+relop
+num
+)
+{
+id
+assign
+id
+addop
+num
+;
+}
+\end{lstlisting}
+
+\subsection{Automated and focused tests}
+
+\begin{itemize}
+    \item The existing CTest suite passed: 74 of 74 tests. It includes
+    regex parsing, Thompson construction, DFA conversion, minimization,
+    and rule parsing.
+    \item The generator produced 196 states before minimization and 44
+    afterward from the supplied rules. The 44-state table was checked
+    against the transition and accepting metadata embedded in
+    \code{generated\_lexer.cpp}.
+    \item The generated source compiled independently using
+    \code{g++ -std=c++17 -Wall -Wextra -pedantic}.
+    \item A separate C++17 harness retrieved tokens incrementally through
+    the lexer's \code{nextToken} method, confirming the token-at-a-time
+    interface.
+    \item Focused checks on the regenerated lexer passed: \code{123},
+    \code{123E4}, \code{12.34}, \code{12.34E5}, and \code{0.5E10}
+    each produced one \code{num}. \code{123E} and \code{12.34E}
+    produce the valid longest number
+    prefix followed by an identifier; \code{12.} produced
+    \code{num(12)} followed by a lexical error for the period; and
+    \code{E123} produced an identifier.
+    \item Keyword-versus-identifier cases, \code{count123}, and
+    overlapping operators (\code{=}, \code{==}, \code{<}, \code{<=},
+    \code{>}, \code{>=}, and \code{!=}) produced the expected classes.
+    Error recovery was checked with \code{@abc} and \code{abc @ def};
+    scanning continued to the valid identifiers after each error.
+\end{itemize}
+
+\section{Assumptions and justifications}
+
+\begin{enumerate}
+    \item \textbf{Number-rule ambiguity.} The prose permits an optional
+    exponent after an integer or decimal number, while the supplied
+    example expression places it only after the decimal alternative.
+    This implementation follows the prose. Its rule is
+    \[
+        \code{num: digit+ ( \textbackslash L | E digits | . digits ( \textbackslash L | E digits))}
+    \]
+    so \code{123E4} and \code{12.34E5} are each one number token. If
+    the instructor requires the exact example rule, replace it with
+    \code{num: digit+ | digit+ . digits ( \textbackslash L | E digits)};
+    the lexer and DFA must then be regenerated from the rules file.
+    \item \textbf{Attribute representation.} The assignment requires
+    an attribute value but does not define a separate encoding. The
+    implementation uses the matched lexeme as the attribute, preserving
+    the source spelling for each token.
+    \item \textbf{Reserved words.} The specification says keywords are
+    reserved. They are built as literal tokens before the general
+    regular-expression rules. Maximal munch still makes a longer word
+    such as \code{ifx} an identifier.
+    \item \textbf{Parser phase boundary.} The generated lexer exposes
+    \code{Lexer::nextToken()} so a future parser can request tokens
+    individually. The parser itself belongs to Phase 2 and is not
+    implemented here.
+    \item \textbf{Example capitalization.} The PDF's illustrative token
+    stream writes \code{Id} once, while the lexical rule and actual
+    implementation use the token class \code{id}. The report records
+    the implementation's lowercase output.
+    \item \textbf{Punctuation glyph.} The PDF text layer represents
+    the semicolon in its punctuation example with U+037E, while the
+    lexical-rules file and supplied program use ASCII semicolon
+    U+003B. The implementation uses ASCII semicolon, consistent with
+    the prose requirement and test program.
+\end{enumerate}
+
+\section{Conclusion}
+
+The Phase 1 implementation connects the supplied rules to a minimized
+DFA and generates a standalone C++ lexer that simulates that DFA.
+The verified DFA has 44 states, and the generated lexer recognizes the
+supplied 23-token program without lexical errors. Unit tests, focused
+scanner checks, and independent C++17 compilation passed. The report
+records the implementation structures, algorithms, complete minimized
+transition table, observed token stream, and specification assumptions.
+
+\end{document}
