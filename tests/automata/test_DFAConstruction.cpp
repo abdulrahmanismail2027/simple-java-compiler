@@ -49,7 +49,7 @@ TEST(DFAConstruction, ConvertsEpsilonTransitionsAndPreservesAcceptPriority) {
     EXPECT_EQ(dfa.getAcceptStates().at(1).priority, 1);
 }
 
-TEST(DFAConstruction, CreatesACompleteEmptySubsetSink) {
+TEST(DFAConstruction, OmitsTransitionsToEmptySubsets) {
     NFA nfa(10);
     nfa.addTransition(10, 'a', 11);
     nfa.addTransition(99, 'b', 100);
@@ -59,16 +59,12 @@ TEST(DFAConstruction, CreatesACompleteEmptySubsetSink) {
 
     const int accepting = dfa.getTable().getNextState(0, 'a');
     ASSERT_GE(accepting, 0);
-    const int sink = dfa.getTable().getNextState(0, 'b');
-    ASSERT_GE(sink, 0);
-    EXPECT_EQ(dfa.getTable().getNextState(sink, 'a'), sink);
-    EXPECT_EQ(dfa.getTable().getNextState(sink, 'b'), sink);
-    EXPECT_EQ(dfa.getTable().getNextState(accepting, 'a'), sink);
-    EXPECT_EQ(dfa.getTable().getNextState(accepting, 'b'), sink);
-    EXPECT_FALSE(dfa.getAcceptStates().contains(sink));
+    EXPECT_EQ(dfa.getTable().getNextState(0, 'b'), -1);
+    EXPECT_EQ(dfa.getTable().getNextState(accepting, 'a'), -1);
+    EXPECT_EQ(dfa.getTable().getNextState(accepting, 'b'), -1);
     EXPECT_EQ(
         dfa.getTable().getAlphabet(),
-        (std::unordered_set<char>{'a', 'b'}));
+        (std::unordered_set<char>{'a'}));
 }
 
 TEST(DFAConstruction, HandlesNFAWithoutTransitionsOrAcceptingStates) {
@@ -193,19 +189,17 @@ TEST(DFAConstruction, KeepsUnreachableAcceptStatesOutOfDFA) {
     EXPECT_TRUE(dfa.getAcceptStates().empty());
 }
 
-TEST(DFAConstruction, AcceptsAnEmptySubsetAsNonAcceptingSink) {
+TEST(DFAConstruction, ReturnsMissingTransitionForEmptySubset) {
     NFA nfa(0);
     nfa.addTransition(0, 'a', 1);
     nfa.addTransition(1, 'b', 2);
     nfa.addAcceptState(AcceptState(2, 0, "ab"));
 
     const DFA dfa = DFA::fromNFA(nfa);
-    const int sink = dfa.getTable().getNextState(dfa.getStartState(), 'b');
+    const int after_a = dfa.getTable().getNextState(dfa.getStartState(), 'a');
 
-    ASSERT_GE(sink, 0);
-    EXPECT_FALSE(dfa.getAcceptStates().contains(sink));
-    EXPECT_EQ(dfa.getTable().getNextState(sink, 'a'), sink);
-    EXPECT_EQ(dfa.getTable().getNextState(sink, 'b'), sink);
+    EXPECT_EQ(dfa.getTable().getNextState(dfa.getStartState(), 'b'), -1);
+    EXPECT_EQ(dfa.getTable().getNextState(after_a, 'a'), -1);
     EXPECT_FALSE(accepts(dfa, "b"));
     EXPECT_TRUE(accepts(dfa, "ab"));
 }

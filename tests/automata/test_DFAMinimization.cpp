@@ -76,7 +76,7 @@ TEST(DFAMinimization, MergesEquivalentNonAcceptingStates) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 3);
+    EXPECT_EQ(reachableStateCount(minimized), 3u);
     expectEquivalentUpTo(dfa, minimized, {'a', 'b'}, 5);
 }
 
@@ -93,7 +93,7 @@ TEST(DFAMinimization, MergesAcceptingStatesWithIdenticalTokenMetadata) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 2);
+    EXPECT_EQ(reachableStateCount(minimized), 2u);
     ASSERT_TRUE(minimized.getAcceptStates().contains(1));
     EXPECT_EQ(minimized.getAcceptStates().at(1).priority, 3);
     EXPECT_EQ(minimized.getAcceptStates().at(1).token_class, "identifier");
@@ -113,7 +113,7 @@ TEST(DFAMinimization, DoesNotMergeAcceptingStatesWithDifferentTokenClasses) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 3);
+    EXPECT_EQ(reachableStateCount(minimized), 3u);
     EXPECT_EQ(minimized.getAcceptStates().size(), 2);
 }
 
@@ -130,7 +130,7 @@ TEST(DFAMinimization, DoesNotMergeAcceptingStatesWithDifferentPriorities) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 3);
+    EXPECT_EQ(reachableStateCount(minimized), 3u);
     EXPECT_EQ(minimized.getAcceptStates().size(), 2);
 }
 
@@ -139,18 +139,23 @@ TEST(DFAMinimization, RemovesUnreachableStates) {
     dfa.addTransition(0, 'a', 1);
     dfa.addTransition(1, 'a', 1);
     dfa.addTransition(50, 'a', 51);
+    dfa.addTransition(50, 'b', 51);
     dfa.addAcceptState(AcceptState(1, 0, "reachable"));
     dfa.addAcceptState(AcceptState(51, 0, "unreachable"));
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 2);
+    EXPECT_EQ(reachableStateCount(minimized), 2u);
+    EXPECT_EQ(
+        minimized.getTable().getAlphabet(),
+        (std::unordered_set<char>{'a'}));
+    EXPECT_EQ(minimized.getTable().getNextState(0, 'b'), -1);
     ASSERT_EQ(minimized.getAcceptStates().size(), 1);
     EXPECT_EQ(minimized.getAcceptStates().begin()->second.token_class, "reachable");
     expectEquivalentUpTo(dfa, minimized, {'a'}, 5);
 }
 
-TEST(DFAMinimization, CompletesPartialTransitionsWithRejectingSink) {
+TEST(DFAMinimization, OmitsTransitionsToRejectingSink) {
     DFA dfa(0);
     dfa.addTransition(0, 'a', 1);
     dfa.addTransition(0, 'b', 2);
@@ -160,14 +165,11 @@ TEST(DFAMinimization, CompletesPartialTransitionsWithRejectingSink) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(minimized.getTable().getAlphabet(),
-              (std::unordered_set<char>{'a', 'b'}));
-    std::unordered_set<int> states = minimized.getTable().getStates();
-    states.insert(minimized.getStartState());
-    for (const int state : states) {
-        EXPECT_NE(minimized.getTable().getNextState(state, 'a'), -1);
-        EXPECT_NE(minimized.getTable().getNextState(state, 'b'), -1);
-    }
+    EXPECT_EQ(
+        minimized.getTable().getAlphabet(),
+        (std::unordered_set<char>{'a'}));
+    EXPECT_EQ(minimized.getTable().getNextState(0, 'b'), -1);
+    EXPECT_EQ(minimized.getTable().getNextState(1, 'b'), -1);
     expectEquivalentUpTo(dfa, minimized, {'a', 'b'}, 5);
 }
 
@@ -178,9 +180,9 @@ TEST(DFAMinimization, CollapsesAnEmptyLanguageToOneRejectingState) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 1);
+    EXPECT_EQ(reachableStateCount(minimized), 1u);
     EXPECT_TRUE(minimized.getAcceptStates().empty());
-    EXPECT_EQ(minimized.getTable().getNextState(0, 'a'), 0);
+    EXPECT_EQ(minimized.getTable().getNextState(0, 'a'), -1);
     EXPECT_FALSE(accepts(minimized, ""));
     EXPECT_FALSE(accepts(minimized, "aaaa"));
 }
@@ -210,7 +212,7 @@ TEST(DFAMinimization, UsesMultipleRefinementRoundsToDistinguishStates) {
 
     const DFA minimized = dfa.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 5);
+    EXPECT_EQ(reachableStateCount(minimized), 4u);
     EXPECT_TRUE(accepts(minimized, "aaa"));
     EXPECT_FALSE(accepts(minimized, ""));
     EXPECT_FALSE(accepts(minimized, "aa"));
@@ -227,8 +229,8 @@ TEST(DFAMinimization, PreservesAnAlreadyMinimalDFAAndIsIdempotent) {
     const DFA minimized = dfa.minimize();
     const DFA minimized_again = minimized.minimize();
 
-    EXPECT_EQ(reachableStateCount(minimized), 4);
-    EXPECT_EQ(reachableStateCount(minimized_again), 4);
+    EXPECT_EQ(reachableStateCount(minimized), 3u);
+    EXPECT_EQ(reachableStateCount(minimized_again), 3u);
     expectEquivalentUpTo(dfa, minimized, {'a', 'b'}, 5);
     expectEquivalentUpTo(minimized, minimized_again, {'a', 'b'}, 5);
 }

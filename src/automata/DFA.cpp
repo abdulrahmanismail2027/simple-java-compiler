@@ -1,7 +1,6 @@
 #include "automata/DFA.h"
 #include "automata/NFA.h"
 
-#include <algorithm>
 #include <limits>
 #include <map>
 #include <set>
@@ -58,10 +57,7 @@ DFA DFA::fromNFA(const NFA &nfa) {
         epsilonClosure(nfa, StateSet{nfa.getStartState()}));
     DFA dfa(start_state);
 
-    std::vector<char> alphabet(
-        nfa.getTable().getAlphabet().begin(),
-        nfa.getTable().getAlphabet().end());
-    std::sort(alphabet.begin(), alphabet.end());
+    const auto &nfa_transitions = nfa.getTable().getTable();
 
     for (std::size_t current_id = 0;
          current_id < dfa_states.size();
@@ -91,12 +87,26 @@ DFA DFA::fromNFA(const NFA &nfa) {
                 selected_accept->token_class));
         }
 
-        for (const char symbol : alphabet) {
-            StateSet destinations;
-            for (const int nfa_state : current_states) {
-                const auto next_states =
-                    nfa.getTable().getTransitions(nfa_state, symbol);
-                destinations.insert(next_states.begin(), next_states.end());
+        std::map<char, StateSet> symbol_destinations;
+        for (const int nfa_state : current_states) {
+            const auto state_transitions = nfa_transitions.find(nfa_state);
+            if (state_transitions == nfa_transitions.end()) {
+                continue;
+            }
+
+            for (const auto &[symbol, destinations] :
+                 state_transitions->second) {
+                if (symbol == EPSILON) {
+                    continue;
+                }
+                symbol_destinations[symbol].insert(
+                    destinations.begin(), destinations.end());
+            }
+        }
+
+        for (auto &[symbol, destinations] : symbol_destinations) {
+            if (destinations.empty()) {
+                continue;
             }
 
             const int next_id = addState(
