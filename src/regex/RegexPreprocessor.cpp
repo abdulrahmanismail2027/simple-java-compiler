@@ -84,6 +84,11 @@ std::string RegexPreprocessor::expandRegex(
             continue;
         }
 
+        if (std::isspace(static_cast<unsigned char>(ranged[i]))) {
+            ++i;
+            continue;
+        }
+
         // Find the longest definition name at this position.
         auto best = rules.regular_definitions.end();
 

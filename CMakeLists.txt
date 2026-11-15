@@ -31,7 +31,7 @@ add_library(automata
 )
 
 add_executable(lexer_main src/lexer/main.cpp)
-target_link_libraries(lexer_main PRIVATE core io regex automata)
+target_link_libraries(lexer_main PRIVATE core io automata regex)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -51,7 +51,7 @@ add_executable(unit_tests
         tests/automata/test_ThompsonConstruction.cpp
 )
 
-target_link_libraries(unit_tests PRIVATE core io regex automata gtest_main)
+target_link_libraries(unit_tests PRIVATE core io automata regex gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
